@@ -1,12 +1,13 @@
+# Maintainer: coolguy565 <coolguy565@users.noreply.github.com>
 pkgname=hello-pacman
 pkgver=1.0.0
 pkgrel=1
 pkgdesc="Example package for a custom pacman repository"
 arch=('x86_64')
-url="https://github.com/USERNAME/REPONAME"
+url="https://github.com/coolguy565/coolguy565.github.io"
 license=('MIT')
 source=("hello.sh")
-md5sums=('SKIP')
+sha256sums=('SKIP')
 
 package() {
   install -Dm755 "$srcdir/hello.sh" "$pkgdir/usr/bin/hello-pacman"

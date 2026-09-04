@@ -1,6 +1,7 @@
+# Maintainer: coolguy565 <coolguy565@users.noreply.github.com>
 pkgname=cool-install-scripts
 pkgver=1.0.0
-pkgrel=8
+pkgrel=9
 pkgdesc="Cool Arch Linux installer and desktop configs (Hyprland lua, waybar, hyprpaper, walker, poweroff)"
 arch=('any')
 url="https://github.com/coolguy565/coolguy565.github.io"
@@ -14,12 +15,14 @@ depends=(
   'foot'
   'mako'
   'figlet'
+  'python'
 )
 optdepends=(
   'walker: app launcher (from this repo)'
   'thunar: default file manager'
   'firefox: default browser'
   'networkmanager: networking'
+  'sddm: display manager theme'
 )
 source=(
   'cool-install.py'

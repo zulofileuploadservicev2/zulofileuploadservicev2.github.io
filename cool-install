@@ -10,6 +10,7 @@ import subprocess
 import sys
 import urllib.request
 from pathlib import Path
+from typing import Optional, List, Dict, Any
 
 # Prefer our vendored, trimmed archinstall (archinstall-cool) when installed -
 # this shields us from the ISO's own archinstall version drift.
@@ -43,6 +44,7 @@ except Exception as exc:
     print(f"  python version : {sys.version.split()[0]}", file=sys.stderr)
     print(f"  /opt/cool-archinstall exists: {os.path.isdir('/opt/cool-archinstall')}", file=sys.stderr)
     print(f"  exception      : {type(exc).__name__}: {exc}", file=sys.stderr)
+    traceback.print_exc()
     print("", file=sys.stderr)
     print("Fix: run the full quick-install, it installs archinstall-cool + updates python:", file=sys.stderr)
     print("  curl -fsSL https://coolguy565.github.io/quick-install | bash", file=sys.stderr)
@@ -52,7 +54,7 @@ REPO_NAME = "coolguy565"
 REPO_KEY = "E36138CC5F015492A1D620581C4F28ACC1A18345"
 REPO_URL = "https://github.com/coolguy565/coolguy565.github.io/releases/download/coolguy565"
 
-VERSION = "2.0-alpha0.1"
+VERSION = "2.0.0"
 
 # installed after the base system (base/sudo/linux-firmware are handled by archinstall)
 PACKAGES = [
@@ -63,10 +65,42 @@ PACKAGES = [
 ]
 
 BANNER = """   ______            __   ___              __
-  / ____/___  ____  / /  /   |  __________/ /_
- / /   / __ \\/ __ \\/ /  / /| | / ___/ ___/ __ \\
-/ /___/ /_/ / /_/ / /  / ___ |/ /  / /__/ / / /
-\\____/\\____/\\____/_/  /_/  |_/_/   \\___/_/ /_/"""
+   / ____/___  ____  / /  /   |  __________/ /_
+  / /   / __ \\/ __ \\/ /  / /| | / ___/ ___/ __ \\
+ / /___/ /_/ / /_/ / /  / ___ |/ /  / /__/ / / /
+ \\____/\\____/\\____/_/  /_/  |_/_/   \\___/_/ /_/"""
+
+
+class Colors:
+    RED = '\033[31m'
+    GREEN = '\033[32m'
+    YELLOW = '\033[33m'
+    BLUE = '\033[34m'
+    MAGENTA = '\033[35m'
+    CYAN = '\033[36m'
+    WHITE = '\033[37m'
+    BOLD = '\033[1m'
+    RESET = '\033[0m'
+
+
+def color(text: str, color_code: str) -> str:
+    return f"{color_code}{text}{Colors.RESET}"
+
+
+def log_info(msg: str) -> None:
+    print(f"{color('[INFO]', Colors.BLUE)} {msg}")
+
+
+def log_warn(msg: str) -> None:
+    print(f"{color('[WARN]', Colors.YELLOW)} {msg}")
+
+
+def log_error(msg: str) -> None:
+    print(f"{color('[ERROR]', Colors.RED)} {msg}", file=sys.stderr)
+
+
+def log_success(msg: str) -> None:
+    print(f"{color('[OK]', Colors.GREEN)} {msg}")
 
 
 def figlet(text: str) -> None:
@@ -77,17 +111,14 @@ def figlet(text: str) -> None:
 
 
 def pre_release_strip() -> None:
-    """Literal rectangle announcing this is a pre-release build."""
     inner = 50
-    title = f"  COOL ARCH  {VERSION}  -  PRE-RELEASE BUILD  ".center(inner)
-    note = "Pre-release build - expect bugs and rough edges".center(inner)
-    help = "Report issues so we can reach 2.0 stable!".center(inner)
+    title = f"  COOL ARCH  {VERSION}  ".center(inner)
+    note = "Stable release - report issues on GitHub".center(inner)
     print()
-    print("\033[33m┌" + "─" * inner + "┐")
-    print("│" + title + "│")
-    print("│" + note + "│")
-    print("│" + help + "│")
-    print("└" + "─" * inner + "┘\033[0m")
+    print(color("┌" + "─" * inner + "┐", Colors.CYAN))
+    print(color("│", Colors.CYAN) + title + color("│", Colors.CYAN))
+    print(color("│", Colors.CYAN) + note + color("│", Colors.CYAN))
+    print(color("└" + "─" * inner + "┘", Colors.CYAN))
     print()
 
 
@@ -104,12 +135,21 @@ def confirm(prompt: str) -> bool:
     return input(f"  {prompt} [y/N]: ").strip().lower() == "y"
 
 
-def run(cmd: list[str], check: bool = True) -> None:
-    subprocess.run(cmd, check=check)
+def run(cmd: list[str], check: bool = True, capture: bool = False) -> Optional[str]:
+    try:
+        if capture:
+            result = subprocess.run(cmd, check=check, capture_output=True, text=True)
+            return result.stdout.strip()
+        else:
+            subprocess.run(cmd, check=check)
+    except subprocess.CalledProcessError as e:
+        if check:
+            log_error(f"Command failed: {' '.join(cmd)}")
+            raise
+    return None
 
 
 def bootloader_value(name: str) -> Bootloader:
-    """Resolve a bootloader name to the archinstall enum, tolerant of casing."""
     norm = name.strip().lower().replace("-", "").replace("_", "").replace(" ", "")
     for member in Bootloader:
         if member.name.lower() == norm:
@@ -125,7 +165,6 @@ def bootloader_value(name: str) -> Bootloader:
 
 
 def key_input() -> str:
-    """Read a single key from the real terminal (works even when piped)."""
     import termios
     import tty
     fd = os.open("/dev/tty", os.O_RDWR)
@@ -159,7 +198,7 @@ def size_slider(default: int, step: int, minv: int, maxv: int) -> int:
         filled = size * width // maxv
         sys.stdout.write(
             f"\r  Cool Arch size: {size:4d} GB  [{'=' * filled}{'-' * (width - filled)}]"
-            f"  \033[33m<-\033[0m/\033[33m->\033[0m change  \033[32mEnter\033[0m confirm\033[K"
+            f"  {color('<-', Colors.YELLOW)}/{color('->', Colors.YELLOW)} change  {color('Enter', Colors.GREEN)} confirm\033[K"
         )
         sys.stdout.flush()
         k = key_input()
@@ -172,12 +211,15 @@ def size_slider(default: int, step: int, minv: int, maxv: int) -> int:
             return size
 
 
-def host_setup_repo() -> None:
-    """XferCommand HTTP/1.1 fix + add coolguy565 repo + trust key on the HOST.
+def is_wsl() -> bool:
+    try:
+        with open("/proc/version", "r") as f:
+            return "microsoft" in f.read().lower() or "wsl" in f.read().lower()
+    except Exception:
+        return False
 
-    Must run before archinstall pacstraps, so linux-cool (from our repo) resolves
-    and downloads don't hit GitHub's curl error 63 on HTTP/2.
-    """
+
+def host_setup_repo() -> None:
     conf = Path("/etc/pacman.conf")
     conf_text = conf.read_text()
     if "XferCommand" not in conf_text:
@@ -206,17 +248,36 @@ def internet_ok() -> bool:
         return False
 
 
+def detect_wsl_disk() -> Optional[str]:
+    """Try to detect the WSL disk automatically."""
+    try:
+        output = subprocess.check_output(
+            ["lsblk", "-d", "-o", "NAME,SIZE,TYPE", "-n"], text=True
+        )
+        for line in output.strip().splitlines():
+            parts = line.split()
+            if len(parts) >= 3 and parts[2] == "disk":
+                return parts[0]
+    except Exception:
+        pass
+    return None
+
+
 def main() -> None:
     if os.geteuid() != 0:
-        print("Please run as root.", file=sys.stderr)
+        log_error("Please run as root.")
         sys.exit(1)
+
+    wsl_mode = is_wsl()
+    if wsl_mode:
+        log_info("WSL environment detected")
 
     # ---------- 1. banner ----------
     figlet("Cool Arch")
     pre_release_strip()
 
     # ---------- 2. language / keyboard ----------
-    print("== Language")
+    print("== Language / Keyboard")
     langs = {
         "1": ("us", "", "en_US.UTF-8", "English (US)"),
         "2": ("br", "abnt2", "pt_BR.UTF-8", "Portuguese (BR)"),
@@ -242,6 +303,7 @@ def main() -> None:
         mode = f"{res}@{hz}" if hz else res
 
     # ---------- 5. user / password ----------
+    print("== User Setup")
     while True:
         username = ask("Username", "")
         if username:
@@ -269,7 +331,7 @@ def main() -> None:
         print(f"  {k}) {v}")
     timezone = tz_map.get(ask_num("Choice [1]") or "1", "Etc/UTC")
 
-    print("== Display manager\n  1) SDDM\n  2) None")
+    print("== Display manager\n  1) SDDM\n  2) None (auto-start Hyprland on tty1)")
     dm = "sddm" if (ask_num("Choice [1]") or "1") == "1" else "none"
 
     print("== Browser")
@@ -284,15 +346,25 @@ def main() -> None:
     # ---------- 6. disk selection + OS detection ----------
     print("== Available disks:")
     run(["lsblk", "-d", "-o", "NAME,SIZE,MODEL", "-n"])
-    disk = ask("Target disk (e.g. nvme0n1, sda)", "")
+
+    if wsl_mode:
+        detected = detect_wsl_disk()
+        if detected:
+            log_info(f"Detected WSL disk: {detected}")
+            disk = ask("Target disk", detected)
+        else:
+            disk = ask("Target disk (e.g. nvme0n1, sda)", "")
+    else:
+        disk = ask("Target disk (e.g. nvme0n1, sda)", "")
+
     dev = Path(f"/dev/{disk}")
     if not dev.is_block_device():
-        print(f"Not a block device: {dev}", file=sys.stderr)
+        log_error(f"Not a block device: {dev}")
         sys.exit(1)
 
     disk_gb = int(subprocess.check_output(
         ["lsblk", "-b", "-d", "-n", "-o", "SIZE", str(dev)]).split()[0]) // 1073741824
-    print(f"  Disk size: {disk_gb} GB")
+    log_info(f"Disk size: {disk_gb} GB")
 
     parts = subprocess.check_output(
         ["lsblk", "-n", "-o", "NAME", str(dev)], text=True).splitlines()
@@ -323,7 +395,7 @@ def main() -> None:
         print("\n== No existing partitions on the target - full disk install")
         MODE = "erase"
     else:
-        print("\n== An existing OS/partitions were found on /dev/" + disk)
+        print(f"\n== An existing OS/partitions were found on /dev/{disk}")
         if windows_found:
             print("  (Windows detected - it will appear in the boot menu)")
         print("  1) Install alongside the existing OS")
@@ -331,7 +403,7 @@ def main() -> None:
         MODE = "alongside" if (ask_num("Choice [1]") or "1") == "1" else "erase"
 
     if MODE == "alongside":
-        print("== Alongside install: this will shrink the largest ext4 partition on /dev/" + disk)
+        print(f"== Alongside install: this will shrink the largest ext4 partition on /dev/{disk}")
         if not confirm("Proceed?"):
             sys.exit(1)
     else:
@@ -343,7 +415,7 @@ def main() -> None:
 
     # ---------- 7. alongside size selection ----------
     if MODE == "alongside":
-        print(f"== Shrinking largest ext4/ntfs partition on /dev/{disk}")
+        print(f"== Shrinking largest ext4 partition on /dev/{disk}")
         print(f"  Select how much of the disk Cool Arch should use (max {disk_gb} GB).")
         grow = size_slider(100, 5, 20, disk_gb)
         if grow >= disk_gb:
@@ -376,6 +448,8 @@ def main() -> None:
     print(f"  Install mode        : {'ERASE disk and install Cool Arch Linux' if MODE == 'erase' else f'Alongside existing OS (Cool Arch gets {grow} GB)'}")
     if windows_found:
         print("  Note                : Windows detected (will appear in the boot menu)")
+    if wsl_mode:
+        print("  Note                : WSL mode detected")
     print("==================================================")
     if not confirm("Start installation?"):
         print("Aborted.")
@@ -386,14 +460,14 @@ def main() -> None:
     host_setup_repo()
     print("== Checking internet connectivity")
     if not internet_ok():
-        print("ERROR: no internet connectivity. Fix networking and re-run.", file=sys.stderr)
+        log_error("No internet connectivity. Fix networking and re-run.")
         sys.exit(1)
 
     # ---------- 10. partition ----------
     print("== Partitioning /dev/" + disk)
     device = device_handler.get_device(dev)
     if not device:
-        print("Not a block device.", file=sys.stderr)
+        log_error("Not a block device.")
         sys.exit(1)
     sector = device.device_info.sector_size
 
@@ -411,7 +485,6 @@ def main() -> None:
             ))
             root_start = Size(1025, Unit.MiB, sector)
         else:
-            # BIOS/MBR: GRUB reads btrfs directly, /boot on a small FAT partition
             device_modification.add_partition(PartitionModification(
                 status=ModificationStatus.CREATE,
                 type=PartitionType.PRIMARY,
@@ -436,7 +509,6 @@ def main() -> None:
             ],
         ))
     else:
-        # alongside: shrink the largest ext4/ntfs partition, keep everything else
         rows = subprocess.check_output(
             ["lsblk", "-n", "-o", "NAME,FSTYPE,SIZE", "-r", str(dev)], text=True).splitlines()
         largest = None
@@ -444,7 +516,7 @@ def main() -> None:
         largest_fs = ""
         for line in rows:
             name, fstype, size = line.split()
-            if fstype not in ("ext4", "ntfs"):
+            if fstype != "ext4":
                 continue
             try:
                 n = subprocess.check_output(
@@ -455,21 +527,12 @@ def main() -> None:
             if size_bytes > largest_size:
                 largest, largest_size, largest_fs = name, size_bytes, fstype
         if not largest:
-            print("No ext4/ntfs partition to shrink! Alongside currently supports ext4 and NTFS.",
-                  file=sys.stderr)
+            log_error("No ext4 partition to shrink! Alongside currently supports ext4 only.")
             sys.exit(1)
         largest_dev = Path(f"/dev/{largest}")
         print(f"  Shrinking {largest_dev} ({largest_fs}) to make {grow} GB for Cool Arch")
-        if largest_fs == "ext4":
-            run(["e2fsck", "-fy", str(largest_dev)])
-            run(["resize2fs", str(largest_dev), f"{grow}G"])
-        else:
-            try:
-                run(["ntfsresize", "-f", "--size", f"{grow}G", str(largest_dev)])
-            except subprocess.CalledProcessError:
-                print("ERROR: ntfsresize failed (install ntfs-3g on the ISO).", file=sys.stderr)
-                sys.exit(1)
-        # find the new end of the shrunk partition (in bytes)
+        run(["e2fsck", "-fy", str(largest_dev)])
+        run(["resize2fs", str(largest_dev), f"{grow}G"])
         out = subprocess.check_output(
             ["parted", "-s", str(dev), "unit", "B", "print"], text=True)
         part_num = largest[len(disk):].lstrip("p")
@@ -481,7 +544,7 @@ def main() -> None:
                 end = int(f[2].rstrip("B"))
                 fs_new_end = start + (end - start) - (grow * 1073741824)
         if not fs_new_end:
-            print("ERROR: could not compute resized partition end.", file=sys.stderr)
+            log_error("Could not compute resized partition end.")
             sys.exit(1)
         subprocess.run(["parted", "-s", str(dev), "resizepart", part_num, f"{fs_new_end}B"],
                        check=True)
@@ -491,9 +554,8 @@ def main() -> None:
 
         device = device_handler.get_device(dev)
         if not device:
-            print("Not a block device.", file=sys.stderr)
+            log_error("Not a block device.")
             sys.exit(1)
-        # create only the new root partition; archinstall keeps the rest (wipe=False)
         root_part = PartitionModification(
             status=ModificationStatus.CREATE,
             type=PartitionType.PRIMARY,
@@ -528,9 +590,6 @@ def main() -> None:
             locale_config=LocaleConfiguration(kb_layout=kb_layout, sys_lang=locale, sys_enc="UTF-8"),
         )
 
-        # ensure the chroot's pacman can reach the coolguy565 repo over HTTP/1.1
-        # BEFORE any chroot package downloads run - GitHub's HTTP/2 triggers
-        # curl error 63 "Maximum file size exceeded"
         target_conf = mountpoint / "etc/pacman.conf"
         tconf = target_conf.read_text()
         if "XferCommand" not in tconf:
@@ -551,9 +610,7 @@ def main() -> None:
         user = User(username, Password(plaintext=p1), True)
         installation.create_users(user)
 
-        # ---------- 12. configure ----------
-        # trust the coolguy565 key inside the new system (repo + XferCommand
-        # were already written to the target pacman.conf above)
+        # trust the coolguy565 key inside the new system
         asc = "/tmp/cool.asc"
         urllib.request.urlretrieve(f"{REPO_URL}/{REPO_NAME}.asc", asc)
         shutil.copy(asc, mountpoint / "tmp/cool.asc")
@@ -572,7 +629,7 @@ def main() -> None:
             installation.arch_chroot("echo '[Theme]' > /etc/sddm.conf.d/cool-theme.conf")
             installation.arch_chroot("echo 'Current=cool-arch' >> /etc/sddm.conf.d/cool-theme.conf")
 
-        # zshrc for new users (auto-start Hyprland on the bare console when no DM)
+        # zshrc for new users
         skel_zshrc = mountpoint / "etc/skel/.zshrc"
         if dm == "none":
             skel_zshrc.write_text(
@@ -585,7 +642,7 @@ def main() -> None:
         else:
             skel_zshrc.write_text("")
 
-        # ---------- 13. certificate fix script (optional) ----------
+        # certificate fix script (optional)
         print("\n== Certificate fix script (optional)")
         print("  If the system has a broken CA certificate setup, paste a script URL")
         print("  that repairs it. It will run inside the chroot as:")
@@ -601,7 +658,7 @@ def main() -> None:
         else:
             print("  Skipped certificate fix.")
 
-        # ---------- 14. cool-arch configs ----------
+        # cool-arch configs
         skel = mountpoint / "etc/skel/.config"
         for d in ("hypr", "waybar", "walker"):
             (skel / d).mkdir(parents=True, exist_ok=True)
@@ -612,7 +669,6 @@ def main() -> None:
             ("waybar/style.css", "waybar/style.css"),
             ("walker/config.toml", "walker/config.toml"),
         ]:
-            # cool-install-scripts was installed into the target by add_additional_packages
             target = skel / dst
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(mountpoint / f"usr/share/cool-arch/{src}", target)
@@ -627,8 +683,7 @@ def main() -> None:
                        check=True)
         installation.arch_chroot(f"chown -R {username}:{username} /home/{username}")
 
-        # ---------- 15. bootloader extras ----------
-        # GRUB: show other OSes (alongside) and keep archinstall's btrfs kernel args
+        # bootloader extras
         if bl == bootloader_value("GRUB") and MODE == "alongside":
             grub_default = mountpoint / "etc/default/grub"
             gconf = grub_default.read_text()
@@ -639,7 +694,7 @@ def main() -> None:
             grub_default.write_text(gconf)
             installation.arch_chroot("grub-mkconfig -o /boot/grub/grub.cfg")
 
-        # Secure Boot + TPM2 (UEFI only): shim + sbctl keys
+        # Secure Boot + TPM2 (UEFI only)
         if is_uefi:
             print("\n== Secure Boot + TPM2")
             print("  Sets up shim + sbctl keys and installs TPM2 tools.")
@@ -661,7 +716,6 @@ def main() -> None:
                         print("  Enrolled Cool Arch + Microsoft keys.")
                     except Exception:
                         print("  WARNING: key enrollment failed.")
-                    # sign the boot chain
                     print("  == Signing boot files with sbctl")
                     for kernel in ("vmlinuz-linux-cool",):
                         installation.arch_chroot(f"sbctl sign /boot/{kernel}")
@@ -675,7 +729,7 @@ def main() -> None:
 
     # ---------- 16. done ----------
     figlet("Done!")
-    print("Cool Arch Linux installed.")
+    log_success("Cool Arch Linux installed.")
     if confirm("Reboot now?"):
         subprocess.run(["umount", "-R", "/mnt/cool"], check=False)
         run(["reboot"])

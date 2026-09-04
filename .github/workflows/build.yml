@@ -8,6 +8,8 @@ on:
       - 'build.sh'
       - '.github/workflows/build.yml'
   workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * 0'  # Weekly rebuild on Sundays
 
 concurrency:
   group: build-release-${{ github.ref }}
@@ -15,6 +17,7 @@ concurrency:
 
 permissions:
   contents: write
+  packages: read
 
 env:
   REPO_NAME: coolguy565
@@ -23,24 +26,53 @@ env:
   PACKAGER_EMAIL: ${{ secrets.PACKAGER_EMAIL }}
   GPGKEY: ${{ secrets.GPGKEY }}
   RELEASE_TAG: coolguy565
+  SIGN_PACKAGES: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     container:
       image: archlinux:base-devel
+      options: --user root
+
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up QEMU for multi-arch (optional)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: amd64,arm64
+
+      - name: Cache pacman packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            /var/cache/pacman/pkg
+            /home/builder/.cache
+          key: pacman-${{ runner.os }}-${{ hashFiles('packages/**/PKGBUILD') }}
+          restore-keys: |
+            pacman-${{ runner.os }}-
+
+      - name: Cache GPG home
+        uses: actions/cache@v4
+        if: env.SIGN_PACKAGES == 'true'
+        with:
+          path: ~/.gnupg
+          key: gpg-${{ runner.os }}-${{ secrets.GPGKEY }}
+          restore-keys: |
+            gpg-${{ runner.os }}-
 
       - name: Update system and install build tools
         run: |
           pacman-key --init
           pacman-key --populate archlinux
-          pacman -Syu --noconfirm
-          pacman -S --noconfirm --needed base-devel git gnupg sudo github-cli
+          pacman -Syu --noconfirm --needed base-devel git gnupg sudo github-cli python3 jq
 
-      - name: Fetch existing release assets (preserves manually-uploaded packages)
+      - name: Fetch existing release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -49,7 +81,7 @@ jobs:
           gh release download "$RELEASE_TAG" --dir repo \
             --pattern '*.pkg.tar.zst*' --pattern '*.db.tar.gz*' --pattern '*.asc' \
             --pattern 'build-manifest.json' 2>/dev/null || true
-          ls repo/ 2>/dev/null || true
+          ls -la repo/ 2>/dev/null || true
 
       - name: Create builder user
         run: |
@@ -62,9 +94,12 @@ jobs:
         env:
           GPG_KEY_B64: ${{ secrets.GPG_KEY_B64 }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
-        run: su builder -c "cd \"$GITHUB_WORKSPACE\" && ./build.sh"
+          SIGN_PACKAGES: ${{ env.SIGN_PACKAGES }}
+        run: |
+          su builder -c "cd \"$GITHUB_WORKSPACE\" && ./build.sh"
 
-      - name: Publish to release
+      - name: Publish to GitHub Release
+        if: success()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -73,4 +108,44 @@ jobs:
             "repo/$REPO_NAME.db.tar.gz" "repo/$REPO_NAME.db.tar.gz.sig" \
             "repo/$REPO_NAME.files.tar.gz" "repo/$REPO_NAME.files.tar.gz.sig" \
             "repo/$REPO_NAME.asc" "repo/build-manifest.json" \
-            packages/*/*.pkg.tar.zst packages/*/*.pkg.tar.zst.sig
+            packages/*/*.pkg.tar.zst packages/*/*.pkg.tar.zst.sig 2>/dev/null || true
+
+      - name: Deploy to GitHub Pages
+        if: success()
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./repo
+          publish_branch: gh-pages
+          force_orphan: true
+          cname: coolguy565.github.io
+
+      - name: Upload build artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            repo/build-manifest.json
+          retention-days: 30
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Lint build.sh
+        run: shellcheck build.sh
+
+      - name: Lint PKGBUILDs
+        run: |
+          for pkg in packages/*/PKGBUILD; do
+            echo "Linting $pkg"
+            shellcheck "$pkg" || true
+            namcap "$pkg" 2>/dev/null || true
+          done
+        continue-on-error: true

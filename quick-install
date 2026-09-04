@@ -9,11 +9,19 @@ REPO_URL="https://github.com/coolguy565/coolguy565.github.io/releases/download/c
 COOL_INSTALL_URL="https://coolguy565.github.io/cool-install"
 SELF_URL="https://coolguy565.github.io/quick-install"
 
-# make sure figlet is available for the banner
-if ! command -v figlet >/dev/null 2>&1; then
-  (command -v sudo >/dev/null 2>&1 && sudo pacman -Sy --noconfirm figlet >/dev/null 2>&1) \
-    || pacman -Sy --noconfirm figlet >/dev/null 2>&1 || true
-fi
+# Colors
+RED='\033[31m'
+GREEN='\033[32m'
+YELLOW='\033[33m'
+BLUE='\033[34m'
+CYAN='\033[36m'
+BOLD='\033[1m'
+RESET='\033[0m'
+
+log_info() { echo -e "${BLUE}[INFO]${RESET} $*"; }
+log_warn() { echo -e "${YELLOW}[WARN]${RESET} $*"; }
+log_error() { echo -e "${RED}[ERROR]${RESET} $*" >&2; }
+log_success() { echo -e "${GREEN}[OK]${RESET} $*"; }
 
 banner() {
   if command -v figlet >/dev/null 2>&1; then
@@ -26,7 +34,7 @@ banner() {
  / /   / __ \/ __ \/ /  / /| | / ___/ ___/ __ \
 / /___/ /_/ / /_/ / /  / ___ |/ /  / /__/ / / /
 \____/\____/\____/_/  /_/  |_/_/   \___/_/ /_/ 
-                                               
+                                                
 BANNER
     tput sgr0
   fi
@@ -39,6 +47,7 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 # add the coolguy565 repo
+log_info "Adding coolguy565 repository..."
 grep -q "^\[$REPO_NAME\]" /etc/pacman.conf || {
   printf '\n[%s]\nSigLevel = Required DatabaseOptional\nServer = %s\n' "$REPO_NAME" "$REPO_URL" >> /etc/pacman.conf
   curl -fsSL -o /tmp/cool.asc "$REPO_URL/$REPO_NAME.asc"
@@ -56,6 +65,7 @@ pacman -Syy
 #                  (archinstall-cool) targets 3.14+ syntax
 #   curl:          all our downloads depend on it
 #   archinstall-cool: our trimmed, vendored archinstall (never the ISO's)
+log_info "Installing critical packages..."
 pacman -S --needed --noconfirm glibc arch-install-scripts python curl archinstall-cool
 
 # self-heal: upgrading python orphans the ISO's old-python packages (they stay
@@ -64,7 +74,7 @@ pacman -S --needed --noconfirm glibc arch-install-scripts python curl archinstal
 heal() {
   local mod="$1" pkg="$2"
   if ! PYTHONPATH=/opt/cool-archinstall python3 -c "import $mod" >/dev/null 2>&1; then
-    echo "  installing $pkg (needed for $mod)..."
+    log_warn "Installing $pkg (needed for $mod)..."
     pacman -S --noconfirm "$pkg"
   fi
 }
@@ -78,6 +88,7 @@ heal pydantic python-pydantic
 heal cryptography python-cryptography
 
 # final check: archinstall itself must import cleanly before we launch
+log_info "Verifying archinstall import..."
 if ! PYTHONPATH=/opt/cool-archinstall python3 -c "
 import sys
 sys.path.insert(0, '/opt/cool-archinstall')
@@ -85,15 +96,18 @@ from archinstall.lib.disk.device_handler import device_handler
 from archinstall.lib.models.device import DiskLayoutConfiguration
 print('archinstall import OK')
 "; then
-  echo "ERROR: archinstall still fails to import." >&2
-  echo "python: $(python3 --version)" >&2
+  log_error "archinstall still fails to import."
+  log_error "python: $(python3 --version)"
   pacman -Q python python-pyparted python-pydantic python-pydantic-core python-cryptography archinstall-cool >&2 2>/dev/null || true
-  echo "Paste this output for diagnosis." >&2
+  log_error "Paste this output for diagnosis."
   exit 1
 fi
+
+log_success "All dependencies satisfied!"
 
 # fetch and run the archinstall-based installer
 tmp=$(mktemp)
 trap 'rm -f "$tmp"' EXIT
+log_info "Downloading cool-install..."
 curl -fsSL "$COOL_INSTALL_URL" -o "$tmp"
 exec python3 "$tmp" < /dev/tty
